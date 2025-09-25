@@ -83,17 +83,69 @@ cloud_transient[P_clearsky_kw < 0.001 * P_RATED_KW] = 0
 print("步骤3：已计算“云瞬变”作为“波动分量”。")
 
 # --- 4. 【已优化】计算光伏的“波动强度 I_F_PV” ---
-print(f"--- 步骤4：以 {TIME_RESOLUTION} 窗口计算光伏波动强度 ---")
-sigma_cloud = cloud_transient.resample(TIME_RESOLUTION).std().dropna()
-px_clearsky = P_clearsky_kw.resample(TIME_RESOLUTION).mean().dropna()
-df_analysis = pd.DataFrame({
-    'Px_clearsky': px_clearsky,
-    'sigma_cloud': sigma_cloud
-}).dropna()
-df_analysis = df_analysis[df_analysis['Px_clearsky'] > 0.01 * P_RATED_KW]
-df_analysis['I_F_PV'] = df_analysis['sigma_cloud'] / df_analysis['Px_clearsky']
-print(f"步骤4：已计算出每个 {TIME_RESOLUTION} 窗口的波动强度 I_F_PV。")
+# print(f"--- 步骤4：以 {TIME_RESOLUTION} 窗口计算光伏波动强度 ---")
+# sigma_cloud = cloud_transient.resample(TIME_RESOLUTION).std().dropna()
+# px_clearsky = P_clearsky_kw.resample(TIME_RESOLUTION).mean().dropna()
+# df_analysis = pd.DataFrame({
+#     'Px_clearsky': px_clearsky,
+#     'sigma_cloud': sigma_cloud
+# }).dropna()
+# df_analysis = df_analysis[df_analysis['Px_clearsky'] > 0.01 * P_RATED_KW]
+# df_analysis['I_F_PV'] = df_analysis['sigma_cloud'] / df_analysis['Px_clearsky']
+# print(f"步骤4：已计算出每个 {TIME_RESOLUTION} 窗口的波动强度 I_F_PV。")
+# --- 4. 以窗口计算“总波动强度”（严格按公式） ---
+print(f"--- 步骤4：以 {TIME_RESOLUTION} 窗口计算光伏总波动强度 ---")
 
+df_1m = pd.DataFrame({
+    'P': P_actual_kw,
+    'P_clear': P_clearsky_kw
+})
+
+# def sigma_total(group):
+#     """
+#     计算实际功率 P 相对于窗口内晴空功率均值 Pst 的均方根偏差，
+#     采用 ddof=1 (样本标准差) 的无偏估计。
+#     """
+#     # P_st(j): 窗口内晴空功率的平均值，这是一个固定的参考点
+#     Pst = group['P_clear'].mean()
+    
+#     # n: 窗口内的数据点数量
+#     n = len(group)
+    
+#     # 对于样本估计，至少需要2个数据点才能计算
+#     if n < 2:
+#         return np.nan
+        
+#     # 计算 (P(i) - Pst)^2 的总和
+#     sum_of_squares = ((group['P'] - Pst)**2).sum()
+    
+#     # 【核心修改】
+#     # 使用 n-1 作为分母，这对应于 ddof=1
+#     # 这被称为“贝塞尔校正” (Bessel's correction)
+#     variance_unbiased = sum_of_squares / (n - 1)
+    
+#     # 返回其平方根
+#     return np.sqrt(variance_unbiased)
+def sigma_total(group):
+    """
+    计算每个窗口内“云瞬变”分量的标准差。
+    这对应于：std(P_actual - P_clearsky)
+    """
+    # 1. 首先，在窗口内的每个时刻，计算实际功率与实时晴空功率的差值
+    fluctuation = group['P'] - group['P_clear']
+    
+    # 2. 然后，对这个差值序列（即波动分量）求标准差
+    # pandas 的 .std() 默认使用 ddof=1，这是样本标准差的无偏估计，是标准做法。
+    return fluctuation.std()
+
+# 这里得到的是 Series，所以用 rename('新名称')
+sigma_pv  = df_1m.resample(TIME_RESOLUTION).apply(sigma_total).rename('sigma_PV')
+Pst_mean = df_1m['P_clear'].resample(TIME_RESOLUTION).mean().rename('Pst')
+
+df_analysis = pd.concat([Pst_mean, sigma_pv], axis=1).dropna()
+df_analysis = df_analysis[df_analysis['Pst'] > 0.01 * P_RATED_KW]
+df_analysis['I_F_PV'] = df_analysis['sigma_PV'] / df_analysis['Pst']
+df_analysis = df_analysis.rename(columns={'Pst': 'Px_clearsky', 'sigma_PV': 'sigma_cloud'})
 # --- 5. 拟合解析表达式 (三参数幂律模型) ---
 def power_law_model(p, a, beta, c):
     return a * np.power(p, beta) + c

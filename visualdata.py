@@ -137,9 +137,4 @@ ax.xaxis.set_minor_formatter(mdates.DateFormatter('%Hh'))
 plt.xlabel("日期与时间")
 
 # 自动调整布局并保存
-plt.tight_layout(rect=[0, 0, 1, 0.96])
-output_path = OUT / f"power_curve_visualization_{START_DATE_TO_PLOT}_to_{END_DATE_TO_PLOT}.png"
-plt.savefig(output_path, dpi=150)
 plt.show()
-
-print(f"\n功率曲线对比图已成功保存至: {output_path}")
