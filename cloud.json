@@ -1,0 +1,9 @@
+{
+  "dataset": "d083003",
+  "date": "201901010000/to/201912311800",
+  "param": "T CDC",
+  "level": "EATM",
+  "oformat": "netCDF4",
+  "nlat": 37.48, "slat": 37.38, "wlon": 237.78, "elon": 237.88,
+  "groupindex": 2
+}
