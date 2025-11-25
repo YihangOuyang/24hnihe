@@ -24,7 +24,7 @@ OUT = Path("outputs/pv_power_law_analysis"); OUT.mkdir(parents=True, exist_ok=Tr
 P_RATED_KW = 30.1
 
 # 2. 分析参数
-TIME_RESOLUTION = '60T' # <<< 时间窗口
+TIME_RESOLUTION = '15min' # <<< 时间窗口
 
 # 3. 【新增的时间修正参数】
 LAG_TO_CORRECT_MINUTES = 0
@@ -42,7 +42,7 @@ def read_csv_tz(path_csv: Path, tz: str) -> pd.DataFrame:
     df.index = idx
     return df
 
-pv_1m = read_csv_tz(INP/"pv_1min_clean.csv", TIMEZONE)
+pv_1m = read_csv_tz(INP/"merged_pv_and_weather_data.csv", TIMEZONE)
 pcol = next((c for c in pv_1m.columns if c.lower() in ["p_kw","power","power_kw"]), pv_1m.columns[0])
 P_actual_kw = pd.to_numeric(pv_1m[pcol], errors="coerce").fillna(0.0).clip(lower=0.0)
 
