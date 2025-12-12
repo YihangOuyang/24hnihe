@@ -13,18 +13,18 @@ from pvlib.temperature import TEMPERATURE_MODEL_PARAMETERS
 # 【配置区域】
 # ===================================================================
 # 1. 地理位置与时区
-LATITUDE = 34.05
-LONGITUDE = -118.24
+LATITUDE = 37.42
+LONGITUDE = -122.15
 ALTITUDE = 71
 TIMEZONE = "UTC"
 
 # 2. 路径配置 (使用绝对路径防错)
 CURRENT_DIR = Path(__file__).parent.absolute()
-INP = CURRENT_DIR / "outputs" / "clean"
-FILE_NAME = INP / "Final_Dataset_With_Features_5min_UTC.csv"
+INP = CURRENT_DIR / "rawdata"
+FILE_NAME = INP / "merged_2018_2019_5min_UTC.csv"
 
 # 输出路径
-OUT = Path("outputs/pv_phys_baseline_2d")
+OUT = Path("outputs/Scatter")
 OUT.mkdir(parents=True, exist_ok=True)
 PARAM_OUT = INP / "physics_params.csv"
 SCATTER_OUT = OUT / "origin_scatter_data.csv"      # 原始散点
@@ -40,7 +40,7 @@ P_RATED_KW = 30.1
 # 3. 分析参数
 
 TIME_RESOLUTION = '15min'
-LAG_TO_CORRECT_MINUTES = -90
+LAG_TO_CORRECT_MINUTES = -120
 # 4. 物理系统参数
 
 SURFACE_TILT = 22.5      
@@ -53,7 +53,7 @@ def read_csv_tz(path_csv: Path, tz: str) -> pd.DataFrame:
     # 兼容两种可能的 CSV 格式
     df = pd.read_csv(path_csv)
     # 优先查找 'Target_Power' (新数据集) 或 'Power_Actual' (旧数据集)
-    pcol = next((c for c in df.columns if c in ['Target_Power', 'Power_Actual', 'p_kw']), None)
+    pcol = next((c for c in df.columns if c in ['Target_Power', 'power_kw', 'p_kw']), None)
     # 查找时间列
     time_col = next((c for c in df.columns if 'time' in c.lower() or 'ts' in c.lower()), df.columns[0])
     # 解析时间
