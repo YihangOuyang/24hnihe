@@ -1,11 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Step 4: Benchmark Analysis (Final Version)
-Features:
-1. Retains original LSTM/MLP structures exactly.
-2. Smart Logic: Auto-load if exists; Auto-retrain if missing OR architecture mismatch.
-3. Added: Ridge, RandomForest, CNN.
-4. Added: Step-wise RMSE Plot.
+Step 4: Benchmark Analysis (Final Version - with Standard Transformer and PiT-Net)
 """
 import pandas as pd
 import numpy as np
@@ -16,7 +11,6 @@ import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
 from sklearn.preprocessing import MinMaxScaler
-# [New Imports]
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.linear_model import Ridge
 import xgboost as xgb
@@ -43,7 +37,10 @@ OUTPUT_DIR = CURRENT_DIR / "outputs" / "benchmark"
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 MODEL_DIR = CURRENT_DIR / "outputs" / "model"
 
-TRANSFORMER_PATH = MODEL_DIR / "transformer_best0.5_0.5.pth"
+# 【修改点 1】: 同时指定纯数据模型和你的物理模型的权重路径
+TRANSFORMER_STD_PATH = MODEL_DIR / "transformer_best1_0.pth"        # Standard Transformer
+TRANSFORMER_PROPOSED_PATH = MODEL_DIR / "transformer_best0.5_0.5.pth" # PiT-Net (Proposed)
+
 SCALER_X_PATH = MODEL_DIR / "scaler_x.pkl"
 SCALER_Y_PATH = MODEL_DIR / "scaler_y.pkl"
 
@@ -65,7 +62,7 @@ RAW_FEATURE_COLS = [
 
 # Switches
 FORCE_RETRAIN_BENCHMARK = False  # False=Smart Check, True=Force Retrain
-PLOT_DAY_INDEX = 90
+PLOT_DAY_INDEX = 20
 
 # ================= Data Pipeline =================
 
@@ -150,7 +147,7 @@ def create_sequences(data_x, data_y, data_p, seq_len, pred_len, step):
         ps.append(data_p[i : i+pred_len, 0])
     return np.array(xs), np.array(ys), np.array(ps)
 
-# ================= Models (Original Structures Kept) =================
+# ================= Models =================
 
 class LSTMModel(nn.Module):
     def __init__(self, input_dim, hidden_dim, output_len, num_layers=2):
@@ -162,7 +159,6 @@ class LSTMModel(nn.Module):
         return self.fc(out[:, -1, :])
 
 class MLPModel(nn.Module):
-    # [Note] Kept exactly as provided in your original code
     def __init__(self, input_len, input_dim, output_len):
         super(MLPModel, self).__init__()
         self.flatten_dim = input_len * input_dim
@@ -175,18 +171,16 @@ class MLPModel(nn.Module):
     def forward(self, x):
         return self.net(x)
 
-# [New Model] CNN
 class CNNModel(nn.Module):
     def __init__(self, input_len, input_dim, output_len):
         super().__init__()
-        # Input: (Batch, Channels, Seq_Len)
         self.conv1 = nn.Conv1d(in_channels=input_dim, out_channels=64, kernel_size=3, padding=1)
         self.conv2 = nn.Conv1d(in_channels=64, out_channels=128, kernel_size=3, padding=1)
         self.pool = nn.AdaptiveAvgPool1d(1) 
         self.fc = nn.Linear(128, output_len)
         
     def forward(self, x):
-        x = x.permute(0, 2, 1) # Transpose to (Batch, Feat, Len)
+        x = x.permute(0, 2, 1)
         x = torch.relu(self.conv1(x))
         x = torch.relu(self.conv2(x))
         x = self.pool(x).squeeze(-1)
@@ -195,11 +189,6 @@ class CNNModel(nn.Module):
 # ================= Smart Logic Functions =================
 
 def train_or_load_sklearn(name, model_class, X_tr_flat, Y_tr_flat, path, **kwargs):
-    """
-    Logic: 
-    - If FORCE=False and file exists: Load.
-    - Else: Train and Save.
-    """
     if not FORCE_RETRAIN_BENCHMARK and path.exists():
         print(f"   🔹 [Skipped] Loading existing {name}...")
         model = joblib.load(path)
@@ -212,12 +201,6 @@ def train_or_load_sklearn(name, model_class, X_tr_flat, Y_tr_flat, path, **kwarg
     return model
 
 def train_or_load_torch(name, model_obj, X_tr, Y_tr, path, epochs=5, batch_size=128):
-    """
-    Logic:
-    - If FORCE=False and file exists: Try Load.
-    - If Load fails (Architecture Mismatch): Catch error -> Train.
-    - If file missing or FORCE=True: Train.
-    """
     path = Path(path)
     load_success = False
     
@@ -228,7 +211,6 @@ def train_or_load_torch(name, model_obj, X_tr, Y_tr, path, epochs=5, batch_size=
             load_success = True
         except RuntimeError as e:
             print(f"   ⚠️ [Load Failed] Architecture mismatch for {name}. Retraining automatically.")
-            # Fall through to training block
     
     if not load_success:
         print(f"   🔸 [Training] Fitting {name} (Epochs={epochs})...")
@@ -258,15 +240,12 @@ def train_or_load_torch(name, model_obj, X_tr, Y_tr, path, epochs=5, batch_size=
 # ================= Main Execution =================
 
 def run_benchmark():
-    # 1. Load Data
     X_all, Y_all, P_all, train_mask, test_mask, scaler_y_k, n_feat, all_times = load_data_strict()
     
-    # 2. Prepare Sequences
     print("\n--- Creating Sequences ---")
     X_tr, Y_tr, _ = create_sequences(X_all[train_mask], Y_all[train_mask], P_all[train_mask], SEQ_LEN, PRED_LEN, 1)
     X_te, Y_te, P_te = create_sequences(X_all[test_mask], Y_all[test_mask], P_all[test_mask], SEQ_LEN, PRED_LEN, 96)
     
-    # Timestamps
     test_indices = np.arange(len(X_all))[test_mask]
     test_timestamps = []
     valid_indices = test_indices[: len(X_all[test_mask]) - PRED_LEN + 1 : 96]
@@ -277,7 +256,6 @@ def run_benchmark():
     
     print(f"   Test Batches: {len(X_te)}")
     
-    # Prepare Targets
     scaler_power = MinMaxScaler()
     Y_tr_scaled = scaler_power.fit_transform(Y_tr.reshape(-1, 1)).reshape(Y_tr.shape)
     
@@ -288,31 +266,18 @@ def run_benchmark():
     results = {}
     print("\n>>> 🚀 Start Benchmark Training/Loading <<<")
 
-    # --- 1. Ridge (New) ---
-    model_ridge = train_or_load_sklearn(
-        "Ridge", Ridge, X_tr_flat, Y_tr_flat, OUTPUT_DIR / "ridge.pkl", alpha=1.0
-    )
+    # --- 1-6. 各种基线模型 ---
+    model_ridge = train_or_load_sklearn("Ridge", Ridge, X_tr_flat, Y_tr_flat, OUTPUT_DIR / "ridge.pkl", alpha=1.0)
     results['Ridge'] = scaler_power.inverse_transform(model_ridge.predict(X_te_flat).reshape(-1, 1)).reshape(Y_te.shape)
 
-    # --- 2. RandomForest (New) ---
-    model_rf = train_or_load_sklearn(
-        "RandomForest", RandomForestRegressor, X_tr_flat, Y_tr_flat, OUTPUT_DIR / "rf.pkl", 
-        n_estimators=20, n_jobs=-1, max_depth=10
-    )
+    model_rf = train_or_load_sklearn("RandomForest", RandomForestRegressor, X_tr_flat, Y_tr_flat, OUTPUT_DIR / "rf.pkl", n_estimators=20, n_jobs=-1, max_depth=10)
     results['RandomForest'] = scaler_power.inverse_transform(model_rf.predict(X_te_flat).reshape(-1, 1)).reshape(Y_te.shape)
 
-    # --- 3. XGBoost ---
-    model_xgb = train_or_load_sklearn(
-        "XGBoost", xgb.XGBRegressor, X_tr_flat, Y_tr_flat, OUTPUT_DIR / "xgb.pkl",
-        n_estimators=100, max_depth=6, device="cuda" if torch.cuda.is_available() else "cpu"
-    )
+    model_xgb = train_or_load_sklearn("XGBoost", xgb.XGBRegressor, X_tr_flat, Y_tr_flat, OUTPUT_DIR / "xgb.pkl", n_estimators=100, max_depth=6, device="cuda" if torch.cuda.is_available() else "cpu")
     results['XGBoost'] = scaler_power.inverse_transform(model_xgb.predict(X_te_flat).reshape(-1, 1)).reshape(Y_te.shape)
 
-    # --- 4. MLP (Original Structure) ---
     model_mlp = MLPModel(SEQ_LEN, n_feat, PRED_LEN).to(DEVICE)
-    model_mlp = train_or_load_torch(
-        "MLP", model_mlp, X_tr, Y_tr_scaled, OUTPUT_DIR / "mlp.pth", epochs=30
-    )
+    model_mlp = train_or_load_torch("MLP", model_mlp, X_tr, Y_tr_scaled, OUTPUT_DIR / "mlp.pth", epochs=30)
     model_mlp.eval()
     with torch.no_grad():
         p = []
@@ -321,11 +286,8 @@ def run_benchmark():
             p.append(model_mlp(batch).cpu().numpy())
     results['MLP'] = scaler_power.inverse_transform(np.concatenate(p).reshape(-1, 1)).reshape(Y_te.shape)
 
-    # --- 5. LSTM (Original Structure) ---
     model_lstm = LSTMModel(n_feat, 64, PRED_LEN).to(DEVICE)
-    model_lstm = train_or_load_torch(
-        "LSTM", model_lstm, X_tr, Y_tr_scaled, OUTPUT_DIR / "lstm.pth", epochs=30
-    )
+    model_lstm = train_or_load_torch("LSTM", model_lstm, X_tr, Y_tr_scaled, OUTPUT_DIR / "lstm.pth", epochs=30)
     model_lstm.eval()
     with torch.no_grad():
         p = []
@@ -334,11 +296,8 @@ def run_benchmark():
             p.append(model_lstm(batch).cpu().numpy())
     results['LSTM'] = scaler_power.inverse_transform(np.concatenate(p).reshape(-1, 1)).reshape(Y_te.shape)
 
-    # --- 6. CNN (New) ---
     model_cnn = CNNModel(SEQ_LEN, n_feat, PRED_LEN).to(DEVICE)
-    model_cnn = train_or_load_torch(
-        "CNN", model_cnn, X_tr, Y_tr_scaled, OUTPUT_DIR / "cnn.pth", epochs=30
-    )
+    model_cnn = train_or_load_torch("CNN", model_cnn, X_tr, Y_tr_scaled, OUTPUT_DIR / "cnn.pth", epochs=30)
     model_cnn.eval()
     with torch.no_grad():
         p = []
@@ -347,67 +306,74 @@ def run_benchmark():
             p.append(model_cnn(batch).cpu().numpy())
     results['CNN'] = scaler_power.inverse_transform(np.concatenate(p).reshape(-1, 1)).reshape(Y_te.shape)
 
-    # --- 7. Transformer ---
-    print("   🔹 Loading Physics-Guided Transformer...")
+    # 【修改点 2】: 单独加载 Standard Transformer (无物理约束版)
+    print("   🔹 Loading Standard Transformer (Baseline)...")
     try:
-        model_tf = TransformerNBEATS(
+        model_tf_std = TransformerNBEATS(
             num_stacks=1, num_blocks_per_stack=1, input_dim=n_feat, 
             d_model=16, nhead=2, num_encoder_layers=1, dim_feedforward=32, 
             input_seq_len=SEQ_LEN, output_len=PRED_LEN, dropout=0.5
         ).to(DEVICE)
-        model_tf.load_state_dict(torch.load(TRANSFORMER_PATH, map_location=DEVICE))
-        model_tf.eval()
+        model_tf_std.load_state_dict(torch.load(TRANSFORMER_STD_PATH, map_location=DEVICE))
+        model_tf_std.eval()
         
         k_preds = []
         with torch.no_grad():
             for i in range(0, len(X_te), 64):
                 batch = torch.FloatTensor(X_te[i:i+64]).to(DEVICE)
-                k_preds.append(model_tf(batch).cpu().numpy())
+                k_preds.append(model_tf_std(batch).cpu().numpy())
         
         k_preds_scaled = np.concatenate(k_preds)
         k_preds_real = scaler_y_k.inverse_transform(k_preds_scaled.reshape(-1, 1)).reshape(Y_te.shape)
         results['Transformer'] = k_preds_real * P_te 
         
     except Exception as e:
-        print(f"❌ Transformer Load Failed: {e}")
+        print(f"❌ Standard Transformer Load Failed: {e}")
 
-# ==========================================
+    # 【修改点 3】: 加载 PiT-Net (提出的物理加权版)
+    print("   🔹 Loading PiT-Net (Proposed)...")
+    try:
+        model_tf_prop = TransformerNBEATS(
+            num_stacks=1, num_blocks_per_stack=1, input_dim=n_feat, 
+            d_model=16, nhead=2, num_encoder_layers=1, dim_feedforward=32, 
+            input_seq_len=SEQ_LEN, output_len=PRED_LEN, dropout=0.5
+        ).to(DEVICE)
+        model_tf_prop.load_state_dict(torch.load(TRANSFORMER_PROPOSED_PATH, map_location=DEVICE))
+        model_tf_prop.eval()
+        
+        k_preds = []
+        with torch.no_grad():
+            for i in range(0, len(X_te), 64):
+                batch = torch.FloatTensor(X_te[i:i+64]).to(DEVICE)
+                k_preds.append(model_tf_prop(batch).cpu().numpy())
+        
+        k_preds_scaled = np.concatenate(k_preds)
+        k_preds_real = scaler_y_k.inverse_transform(k_preds_scaled.reshape(-1, 1)).reshape(Y_te.shape)
+        results['PiT-Net'] = k_preds_real * P_te 
+        
+    except Exception as e:
+        print(f"❌ PiT-Net Load Failed: {e}")
+
+
+    # ==========================================
     # Part C: Metrics & Visualization
     # ==========================================
     print("\n📊 Calculating Metrics...")
     metrics_list = []
     step_rmse_dict = {}
     
-    Y_real = Y_te.copy() # 复制一份，避免修改原始数据
-    
-# ---------------------------------------------------------
-    # [核心修复] 真值物理对齐 (Ground Truth Physics Alignment)
-    # ---------------------------------------------------------
-    # 原因：Step 1 可能在日出边缘填充了“晴空值”，但 Step 4 的物理规则认为此时是“黑夜”。
-    # 这种矛盾会导致所有模型在日出/日落时刻出现虚假的 RMSE 尖峰。
-    # 解决方法：如果物理模型认为 P_clearsky 必须为 0，那么我们在考核时，
-    #           也将 Ground Truth 强制视为 0，忽略 Step 1 的填充噪音。
-    
-    # P_te 已经是经过 elevation < 5 处理的了，直接用它做掩膜
+    Y_real = Y_te.copy() 
     mask_physics_night = (P_te == 0)
     
-    # 统计一下有多少点被修正了
     n_fixed = np.sum((Y_real[mask_physics_night] > 0.1))
-    print(f"🔧 [Physics Fix] Forcing {n_fixed} points in Ground Truth to 0 (Night/Low Elevation mismatch).")
+    print(f"🔧 [Physics Fix] Forcing {n_fixed} points in Ground Truth to 0.")
     
-    # 强制修正真值
     Y_real[mask_physics_night] = 0.0
-    # ---------------------------------------------------------
     
     for name, pred in results.items():
-        # 同样，预测值也要遵循物理约束 (虽然 Transformer 已经遵循了，但 XGB/LSTM 可能没遵循)
         pred = np.maximum(pred, 0.0)
-        
-        # 如果是纯数据模型(XGB, LSTM)，它们可能在夜间预测出 0.001 这种噪音
-        # 为了公平，我们也对预测值应用同样的夜间掩膜
         pred[mask_physics_night] = 0.0
         
-        # Metrics
         rmse = np.sqrt(mean_squared_error(Y_real.flatten(), pred.flatten()))
         mae = mean_absolute_error(Y_real.flatten(), pred.flatten())
         r2 = r2_score(Y_real.flatten(), pred.flatten())
@@ -417,7 +383,6 @@ def run_benchmark():
         })
         results[name] = pred
         
-        # Step-wise RMSE Calculation (Average over samples, keep time steps)
         step_mse = np.mean((Y_real - pred) ** 2, axis=0)
         step_rmse = np.sqrt(step_mse)
         step_rmse_dict[name] = step_rmse
@@ -426,21 +391,48 @@ def run_benchmark():
     print("\n", df_metrics)
     df_metrics.to_csv(OUTPUT_DIR / "benchmark_metrics_final.csv", index=False)
     
-    # Plotting
+    print("\n💾 Saving detailed time-series data...")
+
+    ts_flat = []
+    for batch_ts in test_timestamps:
+        ts_flat.extend(batch_ts)
+    
+    df_all_data = pd.DataFrame({
+        'Timestamp': ts_flat,
+        'Actual_Power_Fixed': Y_real.flatten()
+    })
+
+    # 将 8 个模型（包括 Transformer 和 PiT-Net）的预测全部加入 CSV
+    for name, pred_matrix in results.items():
+        df_all_data[f'Pred_{name}'] = pred_matrix.flatten()
+
+    save_path_ts = OUTPUT_DIR / "benchmark_all_predictions_timeseries.csv"
+    df_all_data.to_csv(save_path_ts, index=False)
+    print(f"✅ [1/2] Time-series data saved to: {save_path_ts}")
+
+    df_step_rmse = pd.DataFrame(step_rmse_dict)
+    df_step_rmse.insert(0, 'Horizon_Hours', np.arange(1, 97) * 0.25)
+    
+    save_path_step = OUTPUT_DIR / "benchmark_stepwise_rmse_data.csv"
+    df_step_rmse.to_csv(save_path_step, index=False)
+    print(f"✅ [2/2] Step-wise RMSE data saved to: {save_path_step}")
+    
+    # 【修改点 4】: 图例颜色分配，PiT-Net 使用抢眼的红色，Standard Transformer 使用粉/紫色
     colors = {
-        'Transformer': '#d62728', 'XGBoost': '#2ca02c', 'RandomForest': '#8c564b',
+        'PiT-Net': '#d62728',         # 红色，突出显示
+        'Transformer': '#e377c2',     # 粉色，作为无物理约束基线
+        'XGBoost': '#2ca02c', 'RandomForest': '#8c564b',
         'LSTM': '#1f77b4', 'CNN': '#9467bd', 'MLP': '#ff7f0e', 'Ridge': '#7f7f7f'
     }
 
-    # Plot 1: Step-wise RMSE
     plt.figure(figsize=(10, 6))
     time_steps = np.arange(1, 97) * 15 / 60 
     
     for name, rmse_curve in step_rmse_dict.items():
         c = colors.get(name, 'gray')
-        lw = 3 if name == 'Transformer' else 1.5
-        ls = '-' if name == 'Transformer' else '-'
-        alpha = 1.0 if name == 'Transformer' else 0.7
+        lw = 3 if name == 'PiT-Net' else 1.5
+        ls = '-' if name == 'PiT-Net' else '-'
+        alpha = 1.0 if name == 'PiT-Net' else 0.7
         plt.plot(time_steps, rmse_curve, color=c, lw=lw, ls=ls, label=name, alpha=alpha)
         
     plt.title("Forecast Horizon Accuracy (Step-wise RMSE)", fontsize=14)
@@ -452,10 +444,8 @@ def run_benchmark():
     
     save_path_rmse = OUTPUT_DIR / "benchmark_stepwise_rmse.png"
     plt.savefig(save_path_rmse, dpi=300, bbox_inches='tight')
-    print(f"✅ Step-wise RMSE plot saved: {save_path_rmse}")
 
-    # Plot 2: Sample Day
-    if PLOT_DAY_INDEX < len(results['Transformer']):
+    if PLOT_DAY_INDEX < len(results['PiT-Net']):
         idx = PLOT_DAY_INDEX
         ts = test_timestamps[idx].tz_localize(None)
         
@@ -464,9 +454,9 @@ def run_benchmark():
         
         for name, pred in results.items():
             c = colors.get(name, 'gray')
-            lw = 3 if name == 'Transformer' else 1.5
-            ls = '-' if name == 'Transformer' else '--'
-            alpha = 1.0 if name == 'Transformer' else 0.6
+            lw = 3 if name == 'PiT-Net' else 1.5
+            ls = '-' if name == 'PiT-Net' else '--'
+            alpha = 1.0 if name == 'PiT-Net' else 0.6
             plt.plot(ts, pred[idx], color=c, lw=lw, ls=ls, label=name, alpha=alpha)
             
         plt.title(f"Day Case Study (Sample {idx})", fontsize=14)
@@ -477,7 +467,6 @@ def run_benchmark():
         
         save_path = OUTPUT_DIR / f"benchmark_plot_sample_{idx}.png"
         plt.savefig(save_path, dpi=300, bbox_inches='tight')
-        print(f"✅ Sample plot saved: {save_path}")
 
 if __name__ == "__main__":
     run_benchmark()

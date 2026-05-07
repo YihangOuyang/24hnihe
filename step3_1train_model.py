@@ -125,7 +125,7 @@ class PhysicsWeightedMSELoss(nn.Module):
         mse_loss = (pred_k - target_k) ** 2
         weighted_loss = weight * mse_loss
         
-        final_loss = 0.5 * weighted_loss + 0.5 * mse_loss
+        final_loss = 0.5 * weighted_loss + 0.5 * mse_loss #权重修改
         
         return final_loss.mean()
 
